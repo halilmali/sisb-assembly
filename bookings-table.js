@@ -4,9 +4,20 @@ import { collection, onSnapshot } from 'https://www.gstatic.com/firebasejs/12.8.
 const tbody = document.getElementById('bookingsBody');
 const metaEl = document.getElementById('meta');
 
+let latestSlots = [];
+
 // Only render links that are safe http(s) URLs
 function safeLink(url) {
     return url && /^https?:\/\//i.test(url.trim()) ? url.trim() : '';
+}
+
+// RFC 4180-style escaping, plus a guard that neutralizes spreadsheet
+// formulas (=, +, -, @) to prevent CSV formula injection.
+function csvCell(value) {
+    let s = value === null || value === undefined ? '' : String(value);
+    if (/^[=+\-@]/.test(s)) s = "'" + s;
+    if (/[",\n\r]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+    return s;
 }
 
 function formatDate(dateStr) {
@@ -15,6 +26,8 @@ function formatDate(dateStr) {
 }
 
 function render(slots) {
+    latestSlots = slots;
+
     // Sort by date, then start time
     slots.sort((a, b) => {
         const keyA = (a.booking_date || '') + ' ' + (a.start_time || '');
@@ -49,6 +62,34 @@ function render(slots) {
 
     metaEl.textContent = `${slots.length} booking${slots.length === 1 ? '' : 's'} • updates automatically`;
 }
+
+// Download the current bookings as a CSV file (generated entirely in the browser)
+function downloadCsv() {
+    const headers = ['Date', 'Start Time', 'Duration (min)', 'Name / Department', 'Topic', 'Slide Link'];
+    const rows = latestSlots.map(s => [
+        s.booking_date || '',
+        (s.start_time || '').substring(0, 5),
+        s.duration_minutes ?? '',
+        s.user_name || '',
+        s.topic || '',
+        s.slide_link || ''
+    ]);
+
+    const csv = [headers, ...rows].map(r => r.map(csvCell).join(',')).join('\r\n');
+
+    // UTF-8 BOM so Excel / Google Sheets detect the encoding correctly
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'bookings.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+document.getElementById('downloadCsv').addEventListener('click', downloadCsv);
 
 // Live subscription — the table refreshes itself whenever a booking changes
 onSnapshot(collection(db, 'bookings'), (snapshot) => {

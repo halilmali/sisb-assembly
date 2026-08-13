@@ -73,6 +73,72 @@ function showBookings() {
 It can also be embedded by URL in a Google Sites page (Insert → Embed → By URL),
 or linked directly from any cell.
 
+## Download bookings as CSV (no server needed)
+
+The bookings table page has a **Download CSV** button that generates `bookings.csv`
+in the browser from the live data — same columns as the table, no Cloud Functions
+or backend required:
+
+- Locally: http://localhost:8080/bookings-table.html
+- Deployed: `https://assembly-62eac.web.app/bookings-table.html`
+
+Open the page and click **Download CSV**; Excel/Google Sheets read the file directly
+(it includes a UTF-8 BOM and quotes fields as needed).
+
+### Auto-import into Google Sheets (no Cloud Functions)
+
+A live CSV URL isn't possible without a server, but Google Sheets can pull the
+bookings straight from Firestore's **public REST API** (the security rules already
+allow read for everyone, and the web API key is meant for public clients). In your
+sheet: **Extensions → Apps Script**, paste the script below, run `refreshBookings`
+(authorize once).
+
+**Usage:** select the cell where you want the table to start (e.g. `A1`), then run
+`refreshBookings`. The bookings are written starting at that cell — only the block
+of cells the table covers is overwritten; nothing else on the sheet is touched.
+Re-run to refresh.
+
+```js
+function refreshBookings() {
+  try {
+    var apiKey = 'AIzaSyAru4C44JXxdrdslZRAaabcP_94bsNhJbs';
+    var url = 'https://firestore.googleapis.com/v1/projects/assembly-62eac/databases/(default)/documents/bookings?key=' + apiKey;
+    var data = JSON.parse(UrlFetchApp.fetch(url).getContentText());
+
+    // Build the table: headers + one row per booking, sorted by date then time
+    var headers = ['Date', 'Start Time', 'Duration (min)', 'Name / Department', 'Topic', 'Slide Link'];
+    var rows = [];
+    (data.documents || []).forEach(function (doc) {
+      var f = doc.fields || {};
+      function val(k) { return f[k] ? (f[k].stringValue || f[k].integerValue || '') : ''; }
+      rows.push([val('booking_date'), val('start_time'), val('duration_minutes'), val('user_name'), val('topic'), val('slide_link')]);
+    });
+    rows.sort(function (a, b) {
+      var ka = (a[0] || '') + ' ' + (a[1] || '');
+      var kb = (b[0] || '') + ' ' + (b[1] || '');
+      return ka < kb ? -1 : ka > kb ? 1 : 0;
+    });
+    rows.unshift(headers);
+
+    // Write starting at the selected cell; only this block is touched
+    var sheet = SpreadsheetApp.getActiveSheet();
+    var cell = sheet.getActiveCell();
+    var numRows = rows.length;
+    var numCols = rows[0].length;
+    sheet.getRange(cell.getRow(), cell.getColumn(), numRows, numCols).setValues(rows);
+  } catch (err) {
+    SpreadsheetApp.getUi().alert('Failed to write bookings: ' + err.message);
+  }
+}
+```
+
+If a previous export was longer than the current one, the leftover cells below the
+new table keep their old values — select and clear those manually if needed.
+
+Note: if you've applied referrer restrictions to the API key, Apps Script requests
+carry no referrer — remove those restrictions for this key (or create a separate
+unrestricted key) for the fetch to work.
+
 ## Setup (one-time, in the Firebase console)
 
 1. Open [Firebase console](https://console.firebase.google.com) → project

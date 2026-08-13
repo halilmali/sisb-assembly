@@ -449,6 +449,18 @@ select {
     cursor: pointer;
 }
 
+/* Dropdown options need explicit colors — some browsers render them
+   with the OS default (light) background while inheriting the light text
+   color from select, making options invisible until hovered */
+select option {
+    background-color: #1e293b;
+    color: var(--text-main);
+}
+
+select option:disabled {
+    color: #64748b;
+}
+
 .submit-btn {
     width: 100%;
     padding: 1rem;

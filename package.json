@@ -1,0 +1,9 @@
+{
+  "name": "sisb-morning-assembly",
+  "version": "1.0.0",
+  "description": "SISB Morning Assembly Booking (Firebase)",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  }
+}

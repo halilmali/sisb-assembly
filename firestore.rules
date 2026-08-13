@@ -1,0 +1,43 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() &&
+        request.auth.token.email in ['admin1@example.com', 'admin2@example.com'];
+    }
+
+    // Per-day capacity counter (booked_minutes). Only ever modified inside
+    // booking/delete transactions from the client. Firestore rules cannot
+    // verify transaction math, so the 20-minute daily cap is enforced by
+    // the app's transactions (and validated again in the UI).
+    match /days/{date} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+    match /bookings/{bookingId} {
+      // Anyone (even signed-out visitors) can view bookings.
+      allow read: if true;
+
+      // Creating a booking requires sign-in, a valid duration, and the
+      // document's email must match the signed-in user's verified email.
+      allow create: if isSignedIn()
+        && request.resource.data.duration_minutes in [5, 10, 15, 20]
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.booking_date is string
+        && request.resource.data.slide_link is string;
+
+      // Only admins may delete bookings (deletion happens in a transaction
+      // that also decrements the day's counter).
+      allow delete: if isAdmin();
+
+      // Bookings are immutable once created; edits are not allowed.
+      allow update: if false;
+    }
+  }
+}

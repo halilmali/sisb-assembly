@@ -10,6 +10,7 @@ let currentDate = new Date();
 let bookingsCache = {};
 let currentUser = null;
 let unsubscribeBookings = null;
+let editingBookingId = null; // set while the modal is editing an existing booking
 
 // DOM Elements
 const calendarGrid = document.getElementById('calendarGrid');
@@ -266,22 +267,31 @@ function renderSidebarList() {
 
             const li = document.createElement('li');
 
-            // Admin Check
-            let deleteBtn = '';
-            if (currentUser && ADMIN_EMAILS.includes(currentUser.email.toLowerCase())) {
-                deleteBtn = `<button onclick="window.deleteBooking('${booking.id}')" title="Delete Booking" style="background:none; border:none; color:var(--danger); cursor:pointer; margin-left: auto; padding: 4px;"><i class="fa-solid fa-trash"></i></button>`;
+            // Owners (and admins) get an edit button; admins also get delete.
+            let actions = '';
+            const isOwner = currentUser && booking.email && currentUser.email.toLowerCase() === booking.email.toLowerCase();
+            const isAdmin = currentUser && ADMIN_EMAILS.includes(currentUser.email.toLowerCase());
+            if (isOwner || isAdmin) {
+                actions += `<button onclick="window.editBooking('${booking.id}')" title="Edit Booking" style="background:none; border:none; color:var(--secondary); cursor:pointer; padding:4px;"><i class="fa-solid fa-pen"></i></button>`;
+            }
+            if (isAdmin) {
+                actions += `<button onclick="window.deleteBooking('${booking.id}')" title="Delete Booking" style="background:none; border:none; color:var(--danger); cursor:pointer; padding:4px;"><i class="fa-solid fa-trash"></i></button>`;
+            }
+            if (actions) {
+                actions = `<div style="display:flex; gap:2px; margin-left:auto;">${actions}</div>`;
             }
 
             li.innerHTML = `
             <div style="display:flex; flex-direction:column; width:100%;">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     <div class="booking-item-date"><i class="fa-regular fa-clock"></i> ${dateStr}</div>
-                    ${deleteBtn}
+                    ${actions}
                 </div>
                 <div class="booking-item-name">${booking.user_name}</div>
                 <div style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.2rem;">${booking.topic || ''}</div>
                 ${safeSlideLink(booking.slide_link) ? `<div style="font-size:0.85rem; margin-bottom:0.2rem;"><a href="${safeSlideLink(booking.slide_link)}" target="_blank" rel="noopener" style="color:var(--secondary); text-decoration:none;"><i class="fa-solid fa-link"></i> Slide Link</a></div>` : ''}
                 <span class="booking-item-time">${timeStr} (${booking.duration_minutes}m)</span>
+                ${booking.gc_post ? '<div style="margin-top:0.25rem;"><span class="gc-post-badge"><i class="fa-solid fa-chalkboard"></i> GC Post</span></div>' : ''}
             </div>
         `;
             allBookingsList.appendChild(li);
@@ -323,7 +333,35 @@ window.deleteBooking = async function (id) {
     }
 };
 
-function openModal(dateStr) {
+// Global Edit Function — owners (and admins) can edit a booking.
+// Opens the modal pre-filled with the booking's data; saving runs a
+// transaction that adjusts the day's capacity by the duration change.
+window.editBooking = function (id) {
+    if (!currentUser) {
+        alert('Please sign in to edit bookings.');
+        return;
+    }
+
+    // Find the booking in the cache
+    let booking = null;
+    Object.keys(bookingsCache).forEach(date => {
+        bookingsCache[date].slots.forEach(slot => {
+            if (slot.id === id) booking = slot;
+        });
+    });
+    if (!booking) return;
+
+    const isOwner = booking.email && currentUser.email.toLowerCase() === booking.email.toLowerCase();
+    const isAdmin = ADMIN_EMAILS.includes(currentUser.email.toLowerCase());
+    if (!isOwner && !isAdmin) {
+        alert('You can only edit your own bookings.');
+        return;
+    }
+
+    openModal(booking.booking_date, booking);
+};
+
+function openModal(dateStr, editBooking = null) {
     const dateObj = new Date(dateStr);
     modalDateTitle.textContent = `Booking for ${dateObj.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}`;
     selectedDateInput.value = dateStr;
@@ -341,45 +379,69 @@ function openModal(dateStr) {
     circleChart.setAttribute('stroke-dasharray', dashArray);
     percentageText.textContent = `${remaining}m`;
 
-    // Update Duration Dropdown options
+    // When editing, the user's own minutes are already counted in `remaining`,
+    // so they can grow back into them — cap options at old duration + remaining.
+    const editAllowance = editBooking ? editBooking.duration_minutes : 0;
     Array.from(durationSelect.options).forEach(opt => {
         if (opt.value) {
-            opt.disabled = parseInt(opt.value) > remaining;
+            opt.disabled = parseInt(opt.value) > remaining + editAllowance;
         }
     });
 
-    // Reset Form
-    bookingForm.reset();
-    selectedDateInput.value = dateStr;
-
-    if (currentUser) {
-        userNameInput.value = currentUser.name;
-    }
     formFeedback.textContent = '';
     formFeedback.className = 'feedback';
 
-    if (remaining === 0) {
-        // Disable form if full
-        bookingForm.querySelector('button').disabled = true;
-        bookingForm.querySelector('button').textContent = "Fully Booked";
-        formFeedback.textContent = "No slots available for this day.";
-        formFeedback.classList.add('error');
-    } else {
+    if (editBooking) {
+        // Edit mode: pre-fill the form with the booking's current values.
+        editingBookingId = editBooking.id;
+        userNameInput.value = editBooking.user_name || '';
+        document.getElementById('topic').value = editBooking.topic || '';
+        document.getElementById('slideLink').value = editBooking.slide_link || '';
+        document.getElementById('gcPost').checked = !!editBooking.gc_post;
+        durationSelect.value = String(editBooking.duration_minutes);
         bookingForm.querySelector('button').disabled = false;
-        bookingForm.querySelector('button').textContent = "Confirm Booking";
+        bookingForm.querySelector('button').textContent = 'Save Changes';
+    } else {
+        // New booking mode: reset the form.
+        editingBookingId = null;
+        bookingForm.reset();
+        selectedDateInput.value = dateStr;
+
+        if (currentUser) {
+            userNameInput.value = currentUser.name;
+        }
+
+        if (remaining === 0) {
+            // Disable form if full
+            bookingForm.querySelector('button').disabled = true;
+            bookingForm.querySelector('button').textContent = "Fully Booked";
+            formFeedback.textContent = "No slots available for this day.";
+            formFeedback.classList.add('error');
+        } else {
+            bookingForm.querySelector('button').disabled = false;
+            bookingForm.querySelector('button').textContent = "Confirm Booking";
+        }
     }
 
-    // List Existing
+    // List Existing (owners/admins get an edit button on their bookings)
     bookingListEl.innerHTML = '';
     if (dayData.slots.length > 0) {
         dayData.slots.forEach(slot => {
             const li = document.createElement('li');
             const startTime = slot.start_time.substring(0, 5);
+            const isOwner = currentUser && slot.email && currentUser.email.toLowerCase() === slot.email.toLowerCase();
+            const isAdmin = currentUser && ADMIN_EMAILS.includes(currentUser.email.toLowerCase());
+            let editBtn = '';
+            if (isOwner || isAdmin) {
+                editBtn = `<button onclick="window.editBooking('${slot.id}')" title="Edit Booking" style="background:none; border:none; color:var(--secondary); cursor:pointer; padding:4px;"><i class="fa-solid fa-pen"></i></button>`;
+            }
             li.innerHTML = `
                 <div>${slot.user_name}</div>
                 <div style="font-size:0.8rem; color:var(--text-muted);">${slot.topic || ''}</div>
                 ${safeSlideLink(slot.slide_link) ? `<div style="font-size:0.8rem;"><a href="${safeSlideLink(slot.slide_link)}" target="_blank" rel="noopener" style="color:var(--secondary); text-decoration:none;"><i class="fa-solid fa-link"></i> Slide Link</a></div>` : ''}
                 <div class="time">${startTime} (${slot.duration_minutes}m)</div>
+                ${slot.gc_post ? '<span class="gc-post-badge"><i class="fa-solid fa-chalkboard"></i> GC Post</span>' : ''}
+                ${editBtn}
             `;
             bookingListEl.appendChild(li);
         });
@@ -411,6 +473,12 @@ async function handleBookingSubmit(e) {
     submitBtn.disabled = true;
     submitBtn.textContent = 'Processing...';
     formFeedback.textContent = '';
+
+    // Editing an existing booking follows a different (transactional) path
+    if (editingBookingId) {
+        await saveBookingEdit(submitBtn);
+        return;
+    }
 
     const name = userNameInput.value.trim();
     const dateStr = selectedDateInput.value;
@@ -461,6 +529,7 @@ async function handleBookingSubmit(e) {
                 duration_minutes: duration,
                 topic,
                 slide_link: slideLink,
+                gc_post: document.getElementById('gcPost').checked,
                 created_at: serverTimestamp()
             });
         });
@@ -477,5 +546,77 @@ async function handleBookingSubmit(e) {
         formFeedback.className = 'feedback error';
         submitBtn.disabled = false;
         submitBtn.textContent = 'Confirm Booking';
+    }
+}
+
+// Save changes to an existing booking. Runs in a transaction so the day's
+// capacity counter is adjusted atomically with the update (no double-booking).
+async function saveBookingEdit(submitBtn) {
+    const name = userNameInput.value.trim();
+    const duration = parseInt(document.getElementById('duration').value, 10);
+    const topic = document.getElementById('topic').value.trim();
+    const slideLink = document.getElementById('slideLink').value.trim();
+
+    // Validate duration
+    if (![5, 10, 15, 20].includes(duration)) {
+        formFeedback.textContent = 'Invalid duration.';
+        formFeedback.className = 'feedback error';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Save Changes';
+        return;
+    }
+
+    const bookingRef = doc(db, 'bookings', editingBookingId);
+
+    try {
+        await runTransaction(db, async (transaction) => {
+            const bookingDoc = await transaction.get(bookingRef);
+            if (!bookingDoc.exists()) {
+                throw new Error('This booking no longer exists — it may have been deleted.');
+            }
+
+            const existing = bookingDoc.data();
+
+            // Client-side ownership guard (the rules enforce this too)
+            const isOwner = existing.email && currentUser.email.toLowerCase() === existing.email.toLowerCase();
+            const isAdmin = ADMIN_EMAILS.includes(currentUser.email.toLowerCase());
+            if (!isOwner && !isAdmin) {
+                throw new Error('You can only edit your own bookings.');
+            }
+
+            // Re-read the day's counter and shift it by the duration change,
+            // still honoring the 20-minute cap.
+            const dayRef = doc(db, 'days', existing.booking_date);
+            const dayDoc = await transaction.get(dayRef);
+            const current = dayDoc.exists() ? (dayDoc.data().booked_minutes || 0) : 0;
+
+            const newTotal = current - existing.duration_minutes + duration;
+            if (newTotal > MAX_MINUTES) {
+                throw new Error(`Not enough time remaining in this slot (${MAX_MINUTES - (current - existing.duration_minutes)} min left).`);
+            }
+
+            transaction.set(dayRef, { booked_minutes: newTotal }, { merge: true });
+            transaction.update(bookingRef, {
+                user_name: name,
+                topic,
+                slide_link: slideLink,
+                duration_minutes: duration,
+                gc_post: document.getElementById('gcPost').checked
+            });
+        });
+
+        editingBookingId = null;
+        formFeedback.textContent = 'Changes saved!';
+        formFeedback.className = 'feedback success';
+        setTimeout(() => {
+            closeModal();
+            // Calendar & sidebar update automatically via onSnapshot
+        }, 1000);
+    } catch (err) {
+        console.error(err);
+        formFeedback.textContent = err.message;
+        formFeedback.className = 'feedback error';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Save Changes';
     }
 }

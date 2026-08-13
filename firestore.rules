@@ -30,14 +30,27 @@ service cloud.firestore {
         && request.resource.data.duration_minutes in [5, 10, 15, 20]
         && request.resource.data.email == request.auth.token.email
         && request.resource.data.booking_date is string
-        && request.resource.data.slide_link is string;
+        && request.resource.data.slide_link is string
+        && request.resource.data.gc_post is bool;
 
       // Only admins may delete bookings (deletion happens in a transaction
       // that also decrements the day's counter).
       allow delete: if isAdmin();
 
-      // Bookings are immutable once created; edits are not allowed.
-      allow update: if false;
+      // A user may edit their own booking (email must match theirs and stay
+      // unchanged); admins may edit any booking. The booking date can't be
+      // moved, the duration must stay valid, and text fields stay strings.
+      // The day's capacity counter is adjusted in the same transaction as the
+      // update, so the 20-minute cap still holds.
+      allow update: if isAdmin()
+        || (isSignedIn()
+            && request.resource.data.email == resource.data.email
+            && request.resource.data.email == request.auth.token.email
+            && request.resource.data.booking_date == resource.data.booking_date
+            && request.resource.data.duration_minutes in [5, 10, 15, 20]
+            && request.resource.data.user_name is string
+            && request.resource.data.slide_link is string
+            && request.resource.data.gc_post is bool);
     }
   }
 }

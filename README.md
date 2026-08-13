@@ -15,7 +15,9 @@ daily capacity). This version runs entirely on Firebase — no PHP/MySQL server 
 
 - **`bookings/{autoId}`** — one document per booking:
   `user_name`, `email`, `google_id` (uid), `booking_date` (`YYYY-MM-DD`),
-  `start_time` (`HH:MM`), `duration_minutes`, `topic`, `slide_link`, `created_at`
+  `start_time` (`HH:MM`), `duration_minutes`, `topic`, `slide_link`,
+  `gc_post` (bool — set when the booking should also be posted to Google
+  Classroom), `created_at`
 - **`days/{YYYY-MM-DD}`** — per-day capacity counter: `booked_minutes`.
   It is only mutated inside the booking/delete **transactions** in `app.js`,
   which atomically enforce the 20-minute daily cap (prevents double-booking).
@@ -167,10 +169,18 @@ firebase deploy --only hosting
 
 The site is served from the project root (`"public": "."` in `firebase.json`).
 
-## Admin accounts
+## Editing bookings
 
-Admins (`admin1@example.com`, `admin2@example.com`) see a delete button
-next to each booking. The list lives in two places — keep them in sync:
+Signed-in users can **edit their own bookings** (name, topic, slide link,
+duration, and the GC Post checkbox) by clicking the pencil icon next to a
+booking in the sidebar or in the day's modal. The edit runs in a transaction that shifts the day's capacity
+counter by the duration change, so the 20-minute cap is preserved (e.g.
+shrinking a 10 → 5 min booking frees 5 minutes for someone else). The booking
+date, owner, and start time can't be changed.
+
+Admins (`admin1@example.com`, `admin2@example.com`) can edit **any**
+booking and see a delete button next to each one. The admin list lives in two
+places — keep them in sync:
 
 - `app.js` → `ADMIN_EMAILS`
 - `firestore.rules` → `isAdmin()` function
@@ -182,4 +192,5 @@ next to each booking. The list lives in two places — keep them in sync:
   The cap is enforced by the client-side transactions and client validation.
 - The old PHP API (`api/`) was removed — `api/config.php` contained a plaintext
   database password and would have been publicly served by Firebase Hosting.
-- Bookings are one-way: once created they can only be removed by an admin.
+- Bookings can be edited by their owner (or an admin) and removed only by an
+  admin; the capacity counter is kept in sync by the app's transactions.

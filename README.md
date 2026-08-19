@@ -180,12 +180,26 @@ counter by the duration change, so the 20-minute cap is preserved (e.g.
 shrinking a 10 → 5 min booking frees 5 minutes for someone else). The booking
 date, owner, and start time can't be changed.
 
-Admins (`admin1@example.com`, `admin2@example.com`) can edit **any**
-booking and see a delete button next to each one. The admin list lives in two
-places — keep them in sync:
+Admins can edit **any** booking and see a delete button next to each one. Admin
+status is granted through the Firebase Auth **custom claim** `admin: true` (set via
+the Firebase Admin SDK), so **no admin email addresses live in this repository**.
+Once the claim is granted:
 
-- `app.js` → `ADMIN_EMAILS`
-- `firestore.rules` → `isAdmin()` function
+- `firestore.rules` → `isAdmin()` checks `request.auth.token.admin == true`
+- `app.js` → `isAdminUser()` reads the same claim from the user's ID token
+
+To grant the claim to a user, run a one-off Admin SDK script (outside this repo,
+e.g. from your local machine or a Cloud Function) like:
+
+```js
+// grant-admin.js  (run with the Firebase Admin SDK + your service account)
+const admin = require('firebase-admin');
+admin.initializeApp({ credential: admin.credential.applicationDefault() });
+admin.auth().setCustomUserClaims('<USER_UID>', { admin: true });
+```
+
+After granting, the user must sign out and back in (or refresh their token) for the
+ID token to include the new claim.
 
 ## Notes & limitations
 

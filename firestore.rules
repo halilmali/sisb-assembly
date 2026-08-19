@@ -7,8 +7,10 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isSignedIn() &&
-        request.auth.token.email in [];
+      // Admin is determined by the Firebase Auth custom claim `admin: true`,
+      // granted via the Firebase Admin SDK. Admin email addresses are never
+      // stored in this repository.
+      return isSignedIn() && request.auth.token.admin == true;
     }
 
     // Per-day capacity counter (booked_minutes). Only ever modified inside

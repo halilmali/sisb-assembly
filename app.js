@@ -2,7 +2,13 @@ import { auth, db } from './firebase-config.js';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut } from 'https://www.gstatic.com/firebasejs/12.8.0/firebase-auth.js';
 import { collection, query, where, onSnapshot, doc, runTransaction, serverTimestamp } from 'https://www.gstatic.com/firebasejs/12.8.0/firebase-firestore.js';
 
-const ADMIN_EMAILS = ['admin1@example.com', 'admin2@example.com'];
+// Admin status is determined from the signed-in user's Firebase Auth custom
+// claim (`admin: true`), which is granted outside this repo via the Firebase
+// Admin SDK. Admin email addresses are intentionally NOT stored in this
+// repository.
+function isAdminUser(user) {
+    return !!(user && user.admin === true);
+}
 
 // Per-day-of-week assembly schedule. Key = getDay() (0=Sun ... 6=Sat).
 // Each day has its own start time and daily capacity (in minutes). Bookings
@@ -103,18 +109,29 @@ signOutBtn.addEventListener('click', async () => {
     }
 });
 
-onAuthStateChanged(auth, (user) => {
+onAuthStateChanged(auth, async (user) => {
     const signedIn = !!user;
 
+    // Read the admin custom claim from the ID token (granted via the
+    // Firebase Admin SDK, not stored in this repo).
+    let isAdmin = false;
+    if (signedIn) {
+        try {
+            const idTokenResult = await user.getIdTokenResult();
+            isAdmin = idTokenResult.claims.admin === true;
+        } catch (err) {
+            console.error('Error reading admin claim:', err);
+        }
+    }
+
     currentUser = signedIn
-        ? { email: user.email, name: user.displayName, picture: user.photoURL, google_id: user.uid }
+        ? { email: user.email, name: user.displayName, picture: user.photoURL, google_id: user.uid, admin: isAdmin }
         : null;
 
     googleSignInBtn.style.display = signedIn ? 'none' : 'flex';
     userInfoDiv.style.display = signedIn ? 'block' : 'none';
 
     if (signedIn) {
-        const isAdmin = ADMIN_EMAILS.includes(currentUser.email.toLowerCase());
         console.log(`Login: ${currentUser.email}, Is Admin: ${isAdmin}`);
         userEmailEl.innerHTML = `Signed in as: ${currentUser.email} ${isAdmin ? '<b style="color:var(--accent-color)">(Admin)</b>' : ''}`;
         userNameInput.value = currentUser.name; // Auto-fill form
@@ -285,7 +302,7 @@ function renderSidebarList() {
             // Owners (and admins) get an edit button; admins also get delete.
             let actions = '';
             const isOwner = currentUser && booking.email && currentUser.email.toLowerCase() === booking.email.toLowerCase();
-            const isAdmin = currentUser && ADMIN_EMAILS.includes(currentUser.email.toLowerCase());
+            const isAdmin = isAdminUser(currentUser);
             if (isOwner || isAdmin) {
                 actions += `<button onclick="window.editBooking('${booking.id}')" title="Edit Booking" style="background:none; border:none; color:var(--secondary); cursor:pointer; padding:4px;"><i class="fa-solid fa-pen"></i></button>`;
             }
@@ -320,7 +337,7 @@ function renderSidebarList() {
 // Global Delete Function for Admins (transaction keeps the daily counter in sync)
 window.deleteBooking = async function (id) {
     if (!currentUser) return;
-    if (!ADMIN_EMAILS.includes(currentUser.email.toLowerCase())) {
+    if (!isAdminUser(currentUser)) {
         alert('Unauthorized: Admins only');
         return;
     }
@@ -367,7 +384,7 @@ window.editBooking = function (id) {
     if (!booking) return;
 
     const isOwner = booking.email && currentUser.email.toLowerCase() === booking.email.toLowerCase();
-    const isAdmin = ADMIN_EMAILS.includes(currentUser.email.toLowerCase());
+    const isAdmin = isAdminUser(currentUser);
     if (!isOwner && !isAdmin) {
         alert('You can only edit your own bookings.');
         return;
@@ -464,7 +481,7 @@ function openModal(dateStr, editBooking = null) {
             const li = document.createElement('li');
             const startTime = slot.start_time.substring(0, 5);
             const isOwner = currentUser && slot.email && currentUser.email.toLowerCase() === slot.email.toLowerCase();
-            const isAdmin = currentUser && ADMIN_EMAILS.includes(currentUser.email.toLowerCase());
+            const isAdmin = isAdminUser(currentUser);
             let editBtn = '';
             if (isOwner || isAdmin) {
                 editBtn = `<button onclick="window.editBooking('${slot.id}')" title="Edit Booking" style="background:none; border:none; color:var(--secondary); cursor:pointer; padding:4px;"><i class="fa-solid fa-pen"></i></button>`;
@@ -615,7 +632,7 @@ async function saveBookingEdit(submitBtn) {
 
             // Client-side ownership guard (the rules enforce this too)
             const isOwner = existing.email && currentUser.email.toLowerCase() === existing.email.toLowerCase();
-            const isAdmin = ADMIN_EMAILS.includes(currentUser.email.toLowerCase());
+            const isAdmin = isAdminUser(currentUser);
             if (!isOwner && !isAdmin) {
                 throw new Error('You can only edit your own bookings.');
             }

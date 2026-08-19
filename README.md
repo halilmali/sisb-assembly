@@ -1,7 +1,9 @@
 # SISB Morning Assembly Booking (Firebase)
 
-A morning-assembly slot booking app for Tuesdays & Thursdays (07:10–07:30 AM, 20-minute
-daily capacity). This version runs entirely on Firebase — no PHP/MySQL server required.
+A morning-assembly slot booking app for Mondays, Wednesdays & Thursdays. Each day has its
+own schedule: Monday 2:35 PM (10-minute capacity), Wednesday 2:45 PM (1-hour capacity),
+Thursday 7:10 AM (20-minute capacity). Bookings are taken in 5-minute parts up to each
+day's capacity. This version runs entirely on Firebase — no PHP/MySQL server required.
 
 ## Stack
 

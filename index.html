@@ -60,7 +60,7 @@
         <main class="main-content">
             <header>
                 <h1><i class="fa-regular fa-calendar-check"></i> Morning Assembly</h1>
-                <p>Select a Tuesday or Thursday (7:10 - 7:30 AM)</p>
+                <p>Select a Monday, Wednesday or Thursday</p>
             </header>
 
             <div class="calendar-controls">
@@ -105,7 +105,7 @@
                     </svg>
                 </div>
                 <div class="text-info">
-                    <p>Total Capacity: <span class="highlight">20 mins</span></p>
+                    <p>Total Capacity: <span id="totalCapacity" class="highlight">-- mins</span></p>
                     <p>Remaining: <span id="remainingTime" class="highlight">...</span></p>
                 </div>
             </div>
@@ -139,11 +139,9 @@
                 <div class="form-group">
                     <label for="duration">Duration</label>
                     <select id="duration" required>
+                        <!-- Duration options are populated dynamically (5-minute
+                             increments) based on the selected day's schedule. -->
                         <option value="" disabled selected>Select duration</option>
-                        <option value="5">5 Minutes</option>
-                        <option value="10">10 Minutes</option>
-                        <option value="15">15 Minutes</option>
-                        <option value="20">20 Minutes</option>
                     </select>
                 </div>
 

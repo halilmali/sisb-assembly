@@ -3,8 +3,20 @@ import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut } from
 import { collection, query, where, onSnapshot, doc, runTransaction, serverTimestamp } from 'https://www.gstatic.com/firebasejs/12.8.0/firebase-firestore.js';
 
 const ADMIN_EMAILS = ['admin1@example.com', 'admin2@example.com'];
-const MAX_MINUTES = 20; // Total assembly capacity per day
-const BASE_TIME = { hours: 7, minutes: 10 }; // First slot starts at 07:10 AM
+
+// Per-day-of-week assembly schedule. Key = getDay() (0=Sun ... 6=Sat).
+// Each day has its own start time and daily capacity (in minutes). Bookings
+// for a day are taken in 5-minute parts up to that day's `maxMinutes`.
+const DAY_SCHEDULE = {
+    1: { start: { hours: 14, minutes: 35 }, maxMinutes: 10 }, // Monday   2:35 PM (10 min)
+    3: { start: { hours: 14, minutes: 45 }, maxMinutes: 60 }, // Wednesday 2:45 PM (1 hr)
+    4: { start: { hours: 7,  minutes: 10 }, maxMinutes: 20 }  // Thursday 7:10 AM (20 min)
+};
+
+// Look up the schedule for a given booking date (YYYY-MM-DD).
+function getDaySchedule(dateStr) {
+    return DAY_SCHEDULE[new Date(dateStr + 'T00:00:00').getDay()] || null;
+}
 
 let currentDate = new Date();
 let bookingsCache = {};
@@ -185,8 +197,9 @@ function renderCalendar() {
 
         dayEl.innerHTML = `<span class="day-number">${day}</span>`;
 
-        // Tuesday (2) or Thursday (4) Check
-        if (dayOfWeek === 2 || dayOfWeek === 4) {
+        // Check if this day has an assembly schedule (active day)
+        const schedule = DAY_SCHEDULE[dayOfWeek];
+        if (schedule) {
             dayEl.classList.add('active-day');
             dayEl.addEventListener('click', () => openModal(dateStr));
 
@@ -213,10 +226,12 @@ function updateCalendarStatus() {
     days.forEach(dayEl => {
         const date = dayEl.dataset.date;
         const statusEl = dayEl.querySelector('.day-status');
+        const schedule = getDaySchedule(date);
+        const maxMins = schedule ? schedule.maxMinutes : 20;
 
         if (bookingsCache[date]) {
             const used = bookingsCache[date].total_booked;
-            const remaining = MAX_MINUTES - used;
+            const remaining = maxMins - used;
 
             if (remaining === 0) {
                 statusEl.innerHTML = '<i class="fa-solid fa-lock"></i> Full';
@@ -226,7 +241,7 @@ function updateCalendarStatus() {
                 dayEl.classList.remove('full');
             }
         } else {
-            statusEl.innerHTML = '20m left';
+            statusEl.innerHTML = `${maxMins}m left`;
             dayEl.classList.remove('full');
         }
     });
@@ -367,26 +382,45 @@ function openModal(dateStr, editBooking = null) {
     selectedDateInput.value = dateStr;
     bookingModal.style.display = 'flex'; // Show the modal!
 
+    // Look up the schedule for this day
+    const schedule = getDaySchedule(dateStr);
+    if (!schedule) return; // Should never happen for an active-day click
+
     // Ensure cache entry exists
     const dayData = bookingsCache[dateStr] || { total_booked: 0, slots: [] };
-    const remaining = MAX_MINUTES - dayData.total_booked;
+    const remaining = schedule.maxMinutes - dayData.total_booked;
 
     remainingTimeEl.textContent = `${remaining} mins`;
 
     // Update Chart
-    const percent = (remaining / MAX_MINUTES) * 100;
+    const percent = (remaining / schedule.maxMinutes) * 100;
     const dashArray = `${percent}, 100`;
     circleChart.setAttribute('stroke-dasharray', dashArray);
     percentageText.textContent = `${remaining}m`;
 
-    // When editing, the user's own minutes are already counted in `remaining`,
-    // so they can grow back into them — cap options at old duration + remaining.
+    // Update total capacity display
+    const totalCapacityEl = document.getElementById('totalCapacity');
+    if (totalCapacityEl) totalCapacityEl.textContent = `${schedule.maxMinutes} mins`;
+
+    // Rebuild duration options dynamically (5-minute increments up to day's max)
     const editAllowance = editBooking ? editBooking.duration_minutes : 0;
-    Array.from(durationSelect.options).forEach(opt => {
-        if (opt.value) {
-            opt.disabled = parseInt(opt.value) > remaining + editAllowance;
-        }
-    });
+    const effectiveMax = Math.min(schedule.maxMinutes, remaining + editAllowance);
+    durationSelect.innerHTML = '';
+    // Add default placeholder option
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.disabled = true;
+    defaultOpt.selected = true;
+    defaultOpt.textContent = 'Select duration';
+    durationSelect.appendChild(defaultOpt);
+    // Add 5-minute increment options
+    for (let d = 5; d <= schedule.maxMinutes; d += 5) {
+        const opt = document.createElement('option');
+        opt.value = d;
+        opt.textContent = `${d} Minutes`;
+        if (d > effectiveMax) opt.disabled = true;
+        durationSelect.appendChild(opt);
+    }
 
     formFeedback.textContent = '';
     formFeedback.className = 'feedback';
@@ -453,9 +487,10 @@ function safeSlideLink(url) {
     return url && /^https?:\/\//i.test(url.trim()) ? url.trim() : '';
 }
 
-// Compute start time: 07:10 AM + minutes already booked for that day
-function calcStartTime(totalUsedMinutes) {
-    const base = new Date(1970, 0, 1, BASE_TIME.hours, BASE_TIME.minutes, 0);
+// Compute the start time for a booking: the day's assembly start time
+// (e.g. 2:35 PM) + minutes already booked for that day.
+function calcStartTime(schedule, totalUsedMinutes) {
+    const base = new Date(1970, 0, 1, schedule.start.hours, schedule.start.minutes, 0);
     base.setMinutes(base.getMinutes() + totalUsedMinutes);
     return `${String(base.getHours()).padStart(2, '0')}:${String(base.getMinutes()).padStart(2, '0')}`;
 }
@@ -486,19 +521,19 @@ async function handleBookingSubmit(e) {
     const topic = document.getElementById('topic').value.trim();
     const slideLink = document.getElementById('slideLink').value.trim();
 
-    // Validate day of week (Tuesdays & Thursdays only)
-    const dayOfWeek = new Date(dateStr + 'T00:00:00').getDay();
-    if (dayOfWeek !== 2 && dayOfWeek !== 4) {
-        formFeedback.textContent = 'Bookings allowed only on Tuesdays and Thursdays.';
+    // Validate that this day has an assembly schedule (active day)
+    const schedule = getDaySchedule(dateStr);
+    if (!schedule) {
+        formFeedback.textContent = 'Bookings are allowed only on Mondays, Wednesdays, and Thursdays.';
         formFeedback.className = 'feedback error';
         submitBtn.disabled = false;
         submitBtn.textContent = 'Confirm Booking';
         return;
     }
 
-    // Validate duration
-    if (![5, 10, 15, 20].includes(duration)) {
-        formFeedback.textContent = 'Invalid duration.';
+    // Validate duration (5-minute increments up to the day's capacity)
+    if (duration % 5 !== 0 || duration <= 0 || duration > schedule.maxMinutes) {
+        formFeedback.textContent = `For a ${schedule.maxMinutes}-minute slot, duration must be in 5-minute increments up to ${schedule.maxMinutes} minutes.`;
         formFeedback.className = 'feedback error';
         submitBtn.disabled = false;
         submitBtn.textContent = 'Confirm Booking';
@@ -509,13 +544,13 @@ async function handleBookingSubmit(e) {
 
     try {
         // Transaction: re-reads the day's counter atomically, so two people
-        // booking at once can never exceed the 20-minute capacity.
+        // booking at once can never exceed that day's capacity.
         await runTransaction(db, async (transaction) => {
             const dayDoc = await transaction.get(dayRef);
             const totalUsed = dayDoc.exists() ? (dayDoc.data().booked_minutes || 0) : 0;
 
-            if (totalUsed + duration > MAX_MINUTES) {
-                throw new Error(`Not enough time remaining in this slot (${MAX_MINUTES - totalUsed} min left).`);
+            if (totalUsed + duration > schedule.maxMinutes) {
+                throw new Error(`Not enough time remaining in this slot (${schedule.maxMinutes - totalUsed} min left).`);
             }
 
             transaction.set(dayRef, { booked_minutes: totalUsed + duration }, { merge: true });
@@ -525,7 +560,7 @@ async function handleBookingSubmit(e) {
                 email: currentUser.email,
                 google_id: currentUser.google_id,
                 booking_date: dateStr,
-                start_time: calcStartTime(totalUsed),
+                start_time: calcStartTime(schedule, totalUsed),
                 duration_minutes: duration,
                 topic,
                 slide_link: slideLink,
@@ -557,8 +592,9 @@ async function saveBookingEdit(submitBtn) {
     const topic = document.getElementById('topic').value.trim();
     const slideLink = document.getElementById('slideLink').value.trim();
 
-    // Validate duration
-    if (![5, 10, 15, 20].includes(duration)) {
+    // Validate duration (5-minute increments up to the day's capacity)
+    const editSchedule = getDaySchedule(document.getElementById('selectedDate').value || '');
+    if (duration % 5 !== 0 || duration <= 0 || !editSchedule || duration > editSchedule.maxMinutes) {
         formFeedback.textContent = 'Invalid duration.';
         formFeedback.className = 'feedback error';
         submitBtn.disabled = false;
@@ -585,14 +621,14 @@ async function saveBookingEdit(submitBtn) {
             }
 
             // Re-read the day's counter and shift it by the duration change,
-            // still honoring the 20-minute cap.
+            // still honoring that day's capacity cap.
             const dayRef = doc(db, 'days', existing.booking_date);
             const dayDoc = await transaction.get(dayRef);
             const current = dayDoc.exists() ? (dayDoc.data().booked_minutes || 0) : 0;
 
             const newTotal = current - existing.duration_minutes + duration;
-            if (newTotal > MAX_MINUTES) {
-                throw new Error(`Not enough time remaining in this slot (${MAX_MINUTES - (current - existing.duration_minutes)} min left).`);
+            if (newTotal > editSchedule.maxMinutes) {
+                throw new Error(`Not enough time remaining in this slot (${editSchedule.maxMinutes - (current - existing.duration_minutes)} min left).`);
             }
 
             transaction.set(dayRef, { booked_minutes: newTotal }, { merge: true });

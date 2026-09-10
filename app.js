@@ -548,6 +548,15 @@ async function handleBookingSubmit(e) {
         return;
     }
 
+    // Slide link is required for every booking
+    if (!slideLink) {
+        formFeedback.textContent = 'Please provide a slide link.';
+        formFeedback.className = 'feedback error';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Confirm Booking';
+        return;
+    }
+
     // Validate duration (5-minute increments up to the day's capacity)
     if (duration % 5 !== 0 || duration <= 0 || duration > schedule.maxMinutes) {
         formFeedback.textContent = `For a ${schedule.maxMinutes}-minute slot, duration must be in 5-minute increments up to ${schedule.maxMinutes} minutes.`;
@@ -608,6 +617,15 @@ async function saveBookingEdit(submitBtn) {
     const duration = parseInt(document.getElementById('duration').value, 10);
     const topic = document.getElementById('topic').value.trim();
     const slideLink = document.getElementById('slideLink').value.trim();
+
+    // Slide link is required when editing a booking too
+    if (!slideLink) {
+        formFeedback.textContent = 'Please provide a slide link.';
+        formFeedback.className = 'feedback error';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Save Changes';
+        return;
+    }
 
     // Validate duration (5-minute increments up to the day's capacity)
     const editSchedule = getDaySchedule(document.getElementById('selectedDate').value || '');
